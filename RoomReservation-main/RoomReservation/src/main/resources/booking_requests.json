@@ -1,0 +1,12 @@
+[
+  {"roomNumber": 101, "guest": "Guest 1"},
+  {"roomNumber": 102, "guest": "Guest 2"},
+  {"roomNumber": 103, "guest": "Guest 3"},
+  {"roomNumber": 104, "guest": "Guest 4"},
+  {"roomNumber": 105, "guest": "Guest 5"},
+  {"roomNumber": 106, "guest": "Guest 6"},
+  {"roomNumber": 107, "guest": "Guest 7"},
+  {"roomNumber": 101, "guest": "Guest 8"},
+  {"roomNumber": 102, "guest": "Guest 9"},
+  {"roomNumber": 103, "guest": "Guest 10"}
+]
