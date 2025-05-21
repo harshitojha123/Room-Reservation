@@ -15,104 +15,123 @@ import com.kayak.hotelsearch.room.RoomDatabaseAccessService;
 
 public class Main {
 
-    // Thread-safe blocking queue for booking requests
-    private static final BlockingQueue<BookingRequest> incomingRequests = new LinkedBlockingQueue<>();
+    // Thread-safe queue holding booking requests
+    private static final BlockingQueue<BookingRequest> bookingQueue = new LinkedBlockingQueue<>();
 
-    // List to keep references to worker threads so we can stop them later
-    private static final List<Thread> workers = new ArrayList<>();
+    // Store worker threads to manage lifecycle (start/stop)
+    private static final List<Thread> workerThreads = new ArrayList<>();
 
     public static void main(String[] args) {
-
-        // Section 1 - Warming up: developer name to stderr, office preference to stdout
+        // Developer and environment info
         System.err.println("Developer: Harshit Ojha");
         System.out.println("Preferred office: Cambridge");
 
-        // Start worker threads
-        for (int i = 0; i < 10; i++) {
+        // Start worker threads to process booking requests
+        startWorkerThreads(10);
+
+        // Load booking requests from JSON and add them to queue
+        enqueueBookingRequests("src/main/resources/booking_requests.json");
+
+        // After all requests have been enqueued, stop workers gracefully
+        stopWorkerThreads();
+
+        System.out.println("Room booking system shutdown complete.");
+    }
+
+    /**
+     * Starts the specified number of worker threads.
+     * Each worker takes booking requests from the queue and processes them.
+     */
+    private static void startWorkerThreads(int numberOfWorkers) {
+        for (int i = 0; i < numberOfWorkers; i++) {
             Thread worker = new Thread(() -> {
                 while (!Thread.currentThread().isInterrupted()) {
                     try {
-                        BookingRequest request = incomingRequests.take();
+                        BookingRequest request = bookingQueue.take();
 
-                        System.out.println("Thread " + Thread.currentThread().getName() +
-                                " processing request for room " + request.getRoomNumber() +
-                                " by " + request.getGuest());
+                        System.out.println("[Thread " + Thread.currentThread().getName() + "] Processing request: Room "
+                                + request.getRoomNumber() + ", Guest: " + request.getGuest());
 
-                        bookRoom(request.getRoomNumber(), request.getGuest());
+                        processBooking(request.getRoomNumber(), request.getGuest());
 
-                        System.out.println("Thread " + Thread.currentThread().getName() +
-                                " finished processing request for room " + request.getRoomNumber() +
-                                " by " + request.getGuest());
+                        System.out.println("[Thread " + Thread.currentThread().getName() + "] Finished request: Room "
+                                + request.getRoomNumber() + ", Guest: " + request.getGuest());
 
                     } catch (InterruptedException e) {
-                        // Restore interrupt status and exit loop to stop thread
+                        // Preserve interrupt status and exit thread loop for graceful shutdown
                         Thread.currentThread().interrupt();
                     }
                 }
-                System.out.println("Thread " + Thread.currentThread().getName() + " stopping.");
+                System.out.println("[Thread " + Thread.currentThread().getName() + "] Stopped.");
             }, "Worker-" + i);
             worker.start();
-            workers.add(worker);
+            workerThreads.add(worker);
         }
-
-        // Read and enqueue booking requests
-        readBookingRequests("src/main/resources/booking_requests.json");
-
-        // After all requests are queued and processed, stop workers gracefully
-        stopAllWorkers();
     }
 
-    // Gracefully stops all worker threads by interrupting them
-    private static void stopAllWorkers() {
-        System.out.println("Stopping all worker threads...");
-        for (Thread worker : workers) {
+    /**
+     * Reads booking requests from a JSON file and enqueues them for processing.
+     * Simulates delay between incoming requests.
+     */
+    private static void enqueueBookingRequests(String filepath) {
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            List<BookingRequest> requests = mapper.readValue(new File(filepath),
+                    new TypeReference<List<BookingRequest>>() {
+                    });
+
+            for (BookingRequest request : requests) {
+                bookingQueue.put(request); // Blocking put in case queue is full (unbounded here)
+                System.out.println("Enqueued booking request: Room " + request.getRoomNumber() + ", Guest " + request.getGuest());
+
+                Thread.sleep(3000); // simulate delay between requests
+            }
+
+        } catch (IOException e) {
+            System.err.println("Failed to read booking requests: " + e.getMessage());
+        } catch (InterruptedException e) {
+            System.err.println("Booking request enqueue interrupted.");
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Processes booking for a single room and guest.
+     * Synchronizes on the Room object to prevent race conditions.
+     */
+    private static void processBooking(int roomNumber, String guest) {
+        Room room = RoomDatabaseAccessService.getInstance().loadRoom(roomNumber);
+
+        if (room == null) {
+            System.out.println("Room " + roomNumber + " not found for guest " + guest);
+            return;
+        }
+
+        synchronized (room) {
+            if (room.isAvailable()) {
+                room.bookRoom();
+                System.out.println("Room " + roomNumber + " successfully booked by " + guest);
+            } else {
+                System.out.println("Room " + roomNumber + " is already booked; unable to book for " + guest);
+            }
+        }
+    }
+
+    /**
+     * Stops all worker threads gracefully by interrupting and joining them.
+     */
+    private static void stopWorkerThreads() {
+        System.out.println("Initiating shutdown of worker threads...");
+        for (Thread worker : workerThreads) {
             worker.interrupt();
         }
-        // Optionally wait for threads to finish
-        for (Thread worker : workers) {
+        for (Thread worker : workerThreads) {
             try {
                 worker.join();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
         }
-        System.out.println("All workers stopped.");
-    }
-
-    // Section 4 - Fix concurrency issue by synchronizing booking per Room instance
-    public static void bookRoom(int roomNumber, String guest) {
-        Room room = RoomDatabaseAccessService.getInstance().loadRoom(roomNumber);
-        if (room != null) {
-            // Synchronize on room object to avoid race conditions
-            synchronized (room) {
-                if (room.isAvailable()) {
-                    room.bookRoom();
-                    System.out.println("    Room " + roomNumber + " booked by " + guest);
-                } else {
-                    System.out.println("    Room " + roomNumber + " is not available for " + guest);
-                }
-            }
-        } else {
-            System.out.println("    Room " + roomNumber + " does not exist for " + guest);
-        }
-    }
-
-    public static void readBookingRequests(String filename) {
-        ObjectMapper mapper = new ObjectMapper();
-        try {
-            List<BookingRequest> requests = mapper.readValue(new File(filename),
-                    new TypeReference<List<BookingRequest>>() {
-                    });
-
-            for (BookingRequest request : requests) {
-                incomingRequests.put(request); // blocks if queue full, but unbounded here
-                Thread.sleep(2000); // simulate delay
-            }
-
-        } catch (IOException e) {
-            System.out.println("Error reading booking requests: " + e.getMessage());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        System.out.println("All worker threads stopped.");
     }
 }
